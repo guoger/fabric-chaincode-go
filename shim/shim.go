@@ -29,7 +29,7 @@ const (
 )
 
 var peerAddress = flag.String("peer.address", "", "peer address")
-var address = flag.String("address", "127.0.0.1:7070", "listen address")
+var address = flag.String("address", "0.0.0.0:8080", "listen address")
 
 //this separates the chaincode stream interface establishment
 //so we can replace it with a mock peer stream
@@ -97,7 +97,7 @@ func Start(cc Chaincode) error {
 	flag.Parse()
 	chaincodename := os.Getenv("CORE_CHAINCODE_ID_NAME")
 	if chaincodename == "" {
-		return errors.New("'CORE_CHAINCODE_ID_NAME' must be set")
+		chaincodename = "MOCK_CHAINCODE_ID"
 	}
 
 	//mock stream not set up ... get real stream
