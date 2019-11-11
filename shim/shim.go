@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 	"unicode/utf8"
 
 	"github.com/golang/protobuf/proto"
@@ -59,7 +60,7 @@ func userChaincodeStreamGetter(name string) (PeerChaincodeStream, error) {
 
 type handler struct {
 	ccname string
-	cc Chaincode
+	cc     Chaincode
 }
 
 type stream struct {
@@ -79,10 +80,10 @@ func serve(ccname string, cc Chaincode) error {
 	if err != nil {
 		return errors.WithMessagef(err, "failed to listen on %s", *address)
 	}
-	log.Println("Start listening on", *address)
+	log.Printf("Chaincode %s starts listening on %s", ccname, *address)
 
 	grpcServer := grpc.NewServer()
-	peerpb.RegisterChaincodeServer(grpcServer, &handler{ccname:ccname})
+	peerpb.RegisterChaincodeServer(grpcServer, &handler{ccname: ccname, cc: cc})
 
 	err = grpcServer.Serve(lis)
 	if err != nil {
@@ -161,6 +162,9 @@ func chatWithPeer(chaincodename string, stream PeerChaincodeStream, cc Chaincode
 		msgAvail <- &recvMsg{in, err}
 	}
 
+	timer := time.NewTimer(1 * time.Minute)
+
+	log.Printf("Start chat loop")
 	go receiveMessage()
 	for {
 		select {
@@ -175,6 +179,7 @@ func chatWithPeer(chaincodename string, stream PeerChaincodeStream, cc Chaincode
 				err := errors.New("received nil message, ending chaincode stream")
 				return err
 			default:
+				timer.Reset(5 * time.Second)
 				err := handler.handleMessage(rmsg.msg, errc)
 				if err != nil {
 					err = fmt.Errorf("error handling message: %s", err)
@@ -183,6 +188,10 @@ func chatWithPeer(chaincodename string, stream PeerChaincodeStream, cc Chaincode
 
 				go receiveMessage()
 			}
+
+		case <-timer.C:
+			log.Printf("Timeout, closing")
+			return fmt.Errorf("bye")
 
 		case sendErr := <-errc:
 			if sendErr != nil {
