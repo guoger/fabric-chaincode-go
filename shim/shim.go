@@ -6,16 +6,19 @@
 package shim
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"os"
 	"unicode/utf8"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric-chaincode-go/shim/internal"
 	peerpb "github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/pkg/errors"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -26,6 +29,7 @@ const (
 )
 
 var peerAddress = flag.String("peer.address", "", "peer address")
+var address = flag.String("address", "127.0.0.1:7070", "listen address")
 
 //this separates the chaincode stream interface establishment
 //so we can replace it with a mock peer stream
@@ -53,6 +57,41 @@ func userChaincodeStreamGetter(name string) (PeerChaincodeStream, error) {
 	return internal.NewRegisterClient(conn)
 }
 
+type handler struct {
+	ccname string
+	cc Chaincode
+}
+
+type stream struct {
+	peerpb.Chaincode_ConnectServer
+}
+
+func (s *stream) CloseSend() error {
+	return s.Send(&peerpb.ChaincodeMessage{})
+}
+
+func (h *handler) Connect(srv peerpb.Chaincode_ConnectServer) error {
+	return chatWithPeer(h.ccname, &stream{srv}, h.cc)
+}
+
+func serve(ccname string, cc Chaincode) error {
+	lis, err := net.Listen("tcp", *address)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to listen on %s", *address)
+	}
+	log.Println("Start listening on", *address)
+
+	grpcServer := grpc.NewServer()
+	peerpb.RegisterChaincodeServer(grpcServer, &handler{ccname:ccname})
+
+	err = grpcServer.Serve(lis)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to server grpc")
+	}
+
+	return nil
+}
+
 // Start chaincodes
 func Start(cc Chaincode) error {
 	flag.Parse()
@@ -64,6 +103,15 @@ func Start(cc Chaincode) error {
 	//mock stream not set up ... get real stream
 	if streamGetter == nil {
 		streamGetter = userChaincodeStreamGetter
+	}
+
+	if *peerAddress == "" {
+		err := serve(chaincodename, cc)
+		if err != nil {
+			return errors.WithMessagef(err, "failed to start chaincode server")
+		}
+
+		return nil
 	}
 
 	stream, err := streamGetter(chaincodename)
